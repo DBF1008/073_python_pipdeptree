@@ -39,25 +39,29 @@ def get_installed_distributions(
 
     should_query_interpreter = not supplied_paths and (Path(interpreter).absolute() != Path(sys.executable).absolute())
     if should_query_interpreter:
-        computed_paths = query_interpreter_for_paths(interpreter, local_only=local_only)
+        computed_paths = query_interpreter_for_paths(interpreter, local_only=local_only, user_only=user_only)
     elif local_only and in_venv:
         computed_paths = [p for p in computed_paths if p.startswith(sys.prefix)]
-
-    if user_only:
+    elif user_only:
         computed_paths = [p for p in computed_paths if p.startswith(site.getusersitepackages())]
 
     return filter_valid_distributions(distributions(path=computed_paths))
 
 
-def query_interpreter_for_paths(interpreter: str, *, local_only: bool = False) -> list[str]:
+def query_interpreter_for_paths(
+    interpreter: str, *, local_only: bool = False, user_only: bool = False  # noqa: FBT001, FBT002
+) -> list[str]:
     """
     Query an interpreter for paths containing distribution metadata.
 
     :raises InterpreterQueryError: If a failure occurred while querying the interpreter.
     """
-    # We query the interpreter directly to get its `sys.path`. If both --python and --local-only are given, only
-    # snatch metadata associated to the interpreter's environment.
-    if local_only:
+    # We query the interpreter directly to get its `sys.path`. When --local-only or --user-only is given alongside
+    # --python, the filtering must happen inside the target interpreter so we use its sys.prefix / site directories
+    # rather than the ones from the process running pipdeptree.
+    if user_only:
+        cmd = "import site, sys; print([p for p in sys.path if p.startswith(site.getusersitepackages())])"
+    elif local_only:
         cmd = "import sys; print([p for p in sys.path if p.startswith(sys.prefix)])"
     else:
         cmd = "import sys; print(sys.path)"

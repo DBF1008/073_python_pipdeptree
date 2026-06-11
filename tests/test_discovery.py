@@ -10,7 +10,7 @@ import pytest
 import virtualenv
 
 from pipdeptree.__main__ import main
-from pipdeptree._discovery import get_installed_distributions, has_valid_metadata
+from pipdeptree._discovery import get_installed_distributions, has_valid_metadata, query_interpreter_for_paths
 
 if TYPE_CHECKING:
     from pytest_mock import MockerFixture
@@ -214,3 +214,56 @@ def test_paths_when_in_virtual_env(tmp_path: Path, fake_dist: Path) -> None:
     dists = get_installed_distributions(interpreter=str(s.creator.exe), supplied_paths=mocked_path)
     assert len(dists) == 1
     assert dists[0].metadata["Name"] == "bar"
+
+
+def test_query_interpreter_user_only_filters_by_target_user_site(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """query_interpreter_for_paths with user_only=True must filter by the target interpreter's user site."""
+    userbase = tmp_path / "userbase"
+    monkeypatch.setenv("PYTHONUSERBASE", str(userbase))
+
+    paths = query_interpreter_for_paths(sys.executable, user_only=True)
+
+    user_site = site.getusersitepackages()
+    for p in paths:
+        assert p.startswith(user_site), f"{p} does not start with {user_site}"
+
+
+def test_query_interpreter_user_only_excludes_non_user_paths(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """query_interpreter_for_paths with user_only=True must exclude venv/system paths."""
+    userbase = tmp_path / "userbase"
+    monkeypatch.setenv("PYTHONUSERBASE", str(userbase))
+
+    all_paths = query_interpreter_for_paths(sys.executable)
+    user_paths = query_interpreter_for_paths(sys.executable, user_only=True)
+
+    assert len(user_paths) <= len(all_paths)
+    non_user = set(all_paths) - set(user_paths)
+    user_site = site.getusersitepackages()
+    for p in non_user:
+        assert not p.startswith(user_site)
+
+
+def test_current_interpreter_user_only_uses_local_site(
+    fake_dist: Path, mocker: MockerFixture, capfd: pytest.CaptureFixture[str]
+) -> None:
+    """When the interpreter is the current process, user_only must filter by the local site.getusersitepackages()."""
+    fake_user_site = str(fake_dist.parent)
+    mocker.patch("pipdeptree._discovery.site.getusersitepackages", Mock(return_value=fake_user_site))
+
+    fake_sys_path = [*sys.path, fake_user_site]
+    mocker.patch("pipdeptree._discovery.sys.path", fake_sys_path)
+
+    mocker.patch("pipdeptree.__main__.find_active_interpreter", return_value=None)
+
+    cmd = ["", "--user-only"]
+    mocker.patch("pipdeptree.__main__.sys.argv", cmd)
+    main()
+
+    out, err = capfd.readouterr()
+    assert not err
+    found = {i.split("==")[0] for i in out.splitlines()}
+    assert "bar" in found

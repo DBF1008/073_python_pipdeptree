@@ -1,18 +1,19 @@
 from __future__ import annotations
 
+import os
+import subprocess  # noqa: S404
 import sys
+from pathlib import Path
 from platform import python_implementation
 from typing import TYPE_CHECKING
-from unittest.mock import Mock
 
 import pytest
 import virtualenv
 
 from pipdeptree.__main__ import main
+from pipdeptree._warning import get_warning_printer
 
 if TYPE_CHECKING:
-    from pathlib import Path
-
     from pytest_mock import MockerFixture
 
 
@@ -99,7 +100,6 @@ def test_custom_interpreter_with_user_only(
 
 def test_custom_interpreter_with_user_only_and_system_site_pkgs_enabled(
     tmp_path: Path,
-    fake_dist: Path,
     mocker: MockerFixture,
     monkeypatch: pytest.MonkeyPatch,
     capfd: pytest.CaptureFixture[str],
@@ -107,19 +107,32 @@ def test_custom_interpreter_with_user_only_and_system_site_pkgs_enabled(
     # ensures that we provide user site metadata when --user-only and --python are passed and the custom interpreter has
     # system site packages enabled
 
-    # Make a fake user site directory since we don't know what to expect from the real one.
-    fake_user_site = str(fake_dist.parent)
-    mocker.patch("pipdeptree._discovery.site.getusersitepackages", Mock(return_value=fake_user_site))
-
-    # Create a temporary virtual environment.
     venv_path = str(tmp_path / "venv")
     result = virtualenv.cli_run([venv_path, "--activators", ""])
+    py = str(result.creator.exe)
 
-    # Use $PYTHONPATH to add the fake user site into the custom interpreter's environment so that it will include it in
-    # its sys.path.
-    monkeypatch.setenv("PYTHONPATH", str(fake_user_site))
+    # Use PYTHONUSERBASE to control the target interpreter's user site directory so that
+    # site.getusersitepackages() inside the target subprocess returns a path under tmp_path.
+    userbase = tmp_path / "userbase"
+    env = {**os.environ, "PYTHONUSERBASE": str(userbase)}
+    target_user_site = subprocess.run(
+        [py, "-c", "import site; print(site.getusersitepackages())"],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
 
-    cmd = ["", f"--python={result.creator.exe}", "--user-only"]
+    # Create a fake dist inside the target interpreter's user site.
+    fake_dist_path = Path(target_user_site) / "bar-2.4.5.dist-info"
+    fake_dist_path.mkdir(parents=True)
+    (fake_dist_path / "METADATA").write_text("Metadata-Version: 2.3\nName: bar\nVersion: 2.4.5\n")
+
+    # PYTHONUSERBASE controls site.getusersitepackages(); PYTHONPATH ensures the directory appears in sys.path.
+    monkeypatch.setenv("PYTHONUSERBASE", str(userbase))
+    monkeypatch.setenv("PYTHONPATH", target_user_site)
+
+    cmd = ["", f"--python={py}", "--user-only"]
     mocker.patch("pipdeptree.__main__.sys.argv", cmd)
     main()
 
@@ -155,3 +168,51 @@ def test_custom_interpreter_ensure_pythonpath_envar_is_honored(
     out, _ = capfd.readouterr()
     found = {i.split("==")[0] for i in out.splitlines()}
     assert {*expected_venv_pkgs, "foo"} == found, out
+
+
+def test_custom_interpreter_user_only_no_spurious_warnings(
+    tmp_path: Path,
+    mocker: MockerFixture,
+    monkeypatch: pytest.MonkeyPatch,
+    capfd: pytest.CaptureFixture[str],
+) -> None:
+    """--python + --user-only must not emit duplicate/invalid metadata warnings from other site dirs."""
+    get_warning_printer()._has_warned = False  # noqa: SLF001
+
+    venv_path = str(tmp_path / "venv")
+    result = virtualenv.cli_run([venv_path, "--activators", ""])
+    py = str(result.creator.exe)
+
+    monkeypatch.delenv("PYTHONPATH", raising=False)
+
+    cmd = ["", f"--python={py}", "--user-only", "-w", "fail"]
+    mocker.patch("pipdeptree.__main__.sys.argv", cmd)
+    ret = main()
+
+    _, err = capfd.readouterr()
+    assert "Warning" not in err
+    assert ret == 0
+
+
+def test_custom_interpreter_local_only_no_spurious_warnings(
+    tmp_path: Path,
+    mocker: MockerFixture,
+    monkeypatch: pytest.MonkeyPatch,
+    capfd: pytest.CaptureFixture[str],
+) -> None:
+    """--python + --local-only must not emit duplicate/invalid metadata warnings from global site dirs."""
+    get_warning_printer()._has_warned = False  # noqa: SLF001
+
+    venv_path = str(tmp_path / "venv")
+    result = virtualenv.cli_run([venv_path, "--system-site-packages", "--activators", ""])
+    py = str(result.creator.exe)
+
+    monkeypatch.delenv("PYTHONPATH", raising=False)
+
+    cmd = ["", f"--python={py}", "--local-only", "-w", "fail"]
+    mocker.patch("pipdeptree.__main__.sys.argv", cmd)
+    ret = main()
+
+    _, err = capfd.readouterr()
+    assert "Warning" not in err
+    assert ret == 0
