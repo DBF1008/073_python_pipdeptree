@@ -48,6 +48,13 @@ pipdeptree --summary -o rich   # styled table
 pipdeptree --summary -o json   # machine-readable
 ```
 
+See which root packages pull in each transitive dependency and spot overlap:
+
+```bash
+pipdeptree --attribution           # aligned text
+pipdeptree --attribution -o json   # machine-readable
+```
+
 Inspect a tree without installing it. Resolve requirements against a package index (needs the `index` extra), or read an
 already-resolved [PEP 751](https://peps.python.org/pep-0751/) lock offline:
 
@@ -58,7 +65,7 @@ pipdeptree from-index --requirements requirements.txt
 pipdeptree from-lock pylock.toml       # l is a shorthand alias
 ```
 
-Every render flag above, including `--summary`, works with both subcommands.
+Every render flag above, including `--summary` and `--attribution`, works with both subcommands.
 
 For the full documentation, visit [pipdeptree.readthedocs.io](https://pipdeptree.readthedocs.io).
 

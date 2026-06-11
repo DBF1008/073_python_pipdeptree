@@ -77,6 +77,41 @@ def test_get_options_summary_rejects_tree_formats(fmt: str, capsys: pytest.Captu
     assert "--summary supports only -o json, rich, text" in capsys.readouterr().err
 
 
+@pytest.mark.parametrize("fmt", ["text", "rich", "json"])
+def test_get_options_attribution_allows_styles(fmt: str) -> None:
+    options = get_options(["--attribution", "-o", fmt])
+    assert options.attribution
+    assert options.output_format == fmt
+
+
+def test_get_options_attribution_default_text() -> None:
+    options = get_options(["--attribution"])
+    assert options.attribution
+    assert options.output_format == "text"
+
+
+@pytest.mark.parametrize("fmt", ["mermaid", "json-tree", "freeze", "graphviz-png"])
+def test_get_options_attribution_rejects_tree_formats(fmt: str, capsys: pytest.CaptureFixture[str]) -> None:
+    with pytest.raises(SystemExit, match="2"):
+        get_options(["--attribution", "-o", fmt])
+
+    assert "--attribution supports only -o json, rich, text" in capsys.readouterr().err
+
+
+def test_get_options_attribution_summary_conflict(capsys: pytest.CaptureFixture[str]) -> None:
+    with pytest.raises(SystemExit, match="2"):
+        get_options(["--attribution", "--summary"])
+
+    assert "--attribution and --summary are mutually exclusive" in capsys.readouterr().err
+
+
+def test_get_options_attribution_reverse_conflict(capsys: pytest.CaptureFixture[str]) -> None:
+    with pytest.raises(SystemExit, match="2"):
+        get_options(["--attribution", "--reverse"])
+
+    assert "--attribution cannot be combined with --reverse" in capsys.readouterr().err
+
+
 @pytest.mark.parametrize(("alias", "canonical"), [("i", "from-index"), ("l", "from-lock")])
 def test_get_options_subcommand_aliases(alias: str, canonical: str) -> None:
     args = [alias, "req"] if canonical == "from-index" else [alias, "pylock.toml"]

@@ -17,6 +17,7 @@ def _options(*, command: str | None, output_format: str) -> Options:
     options.command = command
     options.output_format = output_format
     options.summary = False
+    options.attribution = False
     options.context = RenderContext()
     options.depth = float("inf")
     options.encoding = "utf-8"

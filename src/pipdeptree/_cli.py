@@ -42,6 +42,7 @@ class Options(Namespace):
     graphviz_format: str | None
     output_format: str
     summary: bool
+    attribution: bool
     extras: ExtrasMode
     depth: float
     encoding: str
@@ -92,6 +93,7 @@ ALLOWED_RENDER_FORMATS = ["freeze", "json", "json-tree", "mermaid", "rich", "tex
 # Tree-specific renderers (mermaid, graphviz, freeze, json-tree) have no meaning for the aggregate summary, so
 # --summary is restricted to the styles that can present a flat report.
 SUMMARY_RENDER_FORMATS = frozenset({"text", "rich", "json"})
+ATTRIBUTION_RENDER_FORMATS = frozenset({"text", "rich", "json"})
 ALLOWED_COMPUTED_FIELDS = frozenset({"size", "size-raw", "unique-deps-count", "unique-deps-names", "unique-deps-size"})
 
 
@@ -317,6 +319,14 @@ def _add_render_arguments(parser: ArgumentParser) -> None:
         help="render a one-block health report of the tree instead of the tree itself; combine with -o text "
         "(default), rich, or json. Composes with from-index/from-lock",
     )
+    parser.add_argument(
+        "--attribution",
+        action="store_true",
+        default=False,
+        help="render a dependency attribution summary showing which root packages pull in which "
+        "transitive dependencies; combine with -o text (default), rich, or json. "
+        "Composes with from-index/from-lock",
+    )
     render_type = parser.add_mutually_exclusive_group()
     render_type.add_argument(
         "-j",
@@ -418,6 +428,16 @@ def get_options(args: Sequence[str] | None) -> Options:
     if options.summary and options.output_format not in SUMMARY_RENDER_FORMATS:
         allowed = ", ".join(sorted(SUMMARY_RENDER_FORMATS))
         parser.error(f"--summary supports only -o {allowed} (got {options.output_format})")
+
+    if options.attribution and options.output_format not in ATTRIBUTION_RENDER_FORMATS:
+        allowed = ", ".join(sorted(ATTRIBUTION_RENDER_FORMATS))
+        parser.error(f"--attribution supports only -o {allowed} (got {options.output_format})")
+
+    if options.attribution and options.summary:
+        parser.error("--attribution and --summary are mutually exclusive")
+
+    if options.attribution and options.reverse:
+        parser.error("--attribution cannot be combined with --reverse")
 
     if options.command == "from-index" and not (options.requirement or options.requirements or options.pyproject):
         parser.error("from-index needs at least one REQUIREMENT, --requirements FILE, or --pyproject FILE")

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from .attribution import render_attribution
 from .freeze import render_freeze
 from .graphviz import render_graphviz
 from .json import render_json
@@ -23,7 +24,9 @@ def render(options: Options, tree: PackageDAG) -> None:
     # range, so edges show "[candidate: <version>]" instead of "[required:, installed:]".
     mode: RenderMode = "resolved" if options.command in {"from-index", "from-lock"} else "default"
     # --summary reduces the tree to an aggregate report; output_format then only selects its presentation style.
-    if options.summary:
+    if options.attribution:
+        render_attribution(tree, style=output_format)
+    elif options.summary:
         render_summary(tree, mode=mode, style=output_format)
     elif output_format == "json":
         render_json(tree, context=options.context, mode=mode)

@@ -93,3 +93,17 @@ def test_summary_routing(option: list[str], style: str, mocker: MockerFixture) -
     render = mocker.patch("pipdeptree._render.render_summary")
     main(["--summary", *option])
     render.assert_called_once_with(ANY, mode="default", style=style)
+
+
+@pytest.mark.parametrize(
+    ("option", "style"),
+    [
+        pytest.param([], "text", id="default-style"),
+        pytest.param(["--output", "rich"], "rich", id="rich"),
+        pytest.param(["--output", "json"], "json", id="json"),
+    ],
+)
+def test_attribution_routing(option: list[str], style: str, mocker: MockerFixture) -> None:
+    render = mocker.patch("pipdeptree._render.render_attribution")
+    main(["--attribution", *option])
+    render.assert_called_once_with(ANY, style=style)
