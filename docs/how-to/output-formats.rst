@@ -1,0 +1,296 @@
+Output formats
+==============
+
+pipdeptree supports multiple output formats via ``-o FMT`` (or ``--output FMT``). All examples below use
+``--packages pytest`` to keep the output concise.
+
+text (default)
+--------------
+
+Unicode box-drawing tree:
+
+.. code-block:: console
+
+    $ pipdeptree --packages pytest
+    pytest==9.0.2
+    ├── iniconfig [required: >=1.0.1, installed: 2.3.0]
+    ├── packaging [required: >=22, installed: 26.0]
+    ├── pluggy [required: >=1.5,<2, installed: 1.6.0]
+    └── Pygments [required: >=2.7.2, installed: 2.19.2]
+
+rich
+----
+
+Enhanced terminal output with colors and checkmarks (requires ``pipdeptree[rich]``):
+
+.. code-block:: console
+
+    $ pipdeptree --packages pytest -o rich
+    pytest==9.0.2
+    ┣━━ ✓ iniconfig required: >=1.0.1 installed: 2.3.0
+    ┣━━ ✓ packaging required: >=22 installed: 26.0
+    ┣━━ ✓ pluggy required: >=1.5,<2 installed: 1.6.0
+    ┗━━ ✓ Pygments required: >=2.7.2 installed: 2.19.2
+
+freeze
+------
+
+pip-compatible flat format with indentation showing hierarchy:
+
+.. code-block:: console
+
+    $ pipdeptree --packages pytest -o freeze
+    pytest==9.0.2
+      iniconfig==2.3.0
+      packaging==26.0
+      pluggy==1.6.0
+      Pygments==2.19.2
+
+json
+----
+
+Flat JSON array with package and dependency objects:
+
+.. code-block:: console
+
+    $ pipdeptree --packages pytest -o json
+
+.. code-block:: json
+
+    [
+        {
+            "package": {
+                "key": "pytest",
+                "package_name": "pytest",
+                "installed_version": "9.0.2"
+            },
+            "dependencies": [
+                {
+                    "key": "iniconfig",
+                    "package_name": "iniconfig",
+                    "installed_version": "2.3.0",
+                    "required_version": ">=1.0.1"
+                },
+                {
+                    "key": "pluggy",
+                    "package_name": "pluggy",
+                    "installed_version": "1.6.0",
+                    "required_version": ">=1.5,<2"
+                }
+            ]
+        }
+    ]
+
+With ``--metadata`` or ``--computed``, package dicts include extra fields:
+
+.. code-block:: console
+
+    $ pipdeptree --packages rich -o json --metadata license --computed size,unique-deps-count,unique-deps-names
+
+.. code-block:: json
+
+    {
+        "package": {
+            "key": "rich",
+            "package_name": "rich",
+            "installed_version": "14.3.3",
+            "metadata": {
+                "license": "MIT License"
+            },
+            "computed": {
+                "size": "1.2 MB",
+                "unique_deps_count": 2,
+                "unique_deps_names": [
+                    "markdown-it-py",
+                    "mdurl"
+                ]
+            }
+        },
+        "dependencies": [
+            {
+                "key": "markdown-it-py",
+                "package_name": "markdown-it-py",
+                "installed_version": "4.0.0",
+                "required_version": ">=2.2.0"
+            },
+            {
+                "key": "pygments",
+                "package_name": "Pygments",
+                "installed_version": "2.19.2",
+                "required_version": ">=2.13.0,<3.0.0"
+            }
+        ]
+    }
+
+json-tree
+---------
+
+Nested JSON mirroring the text tree layout:
+
+.. code-block:: console
+
+    $ pipdeptree --packages pytest -o json-tree
+
+.. code-block:: json
+
+    [
+        {
+            "key": "pytest",
+            "package_name": "pytest",
+            "installed_version": "9.0.2",
+            "required_version": "9.0.2",
+            "dependencies": [
+                {
+                    "key": "iniconfig",
+                    "package_name": "iniconfig",
+                    "installed_version": "2.3.0",
+                    "required_version": ">=1.0.1",
+                    "dependencies": []
+                }
+            ]
+        }
+    ]
+
+mermaid
+-------
+
+`Mermaid <https://mermaid.js.org>`_ flowchart diagram:
+
+.. code-block:: console
+
+    $ pipdeptree --packages pytest -o mermaid
+
+.. code-block:: text
+
+    flowchart TD
+        classDef missing stroke-dasharray: 5
+        iniconfig["iniconfig<br/>2.3.0"]
+        packaging["packaging<br/>26.0"]
+        pluggy["pluggy<br/>1.6.0"]
+        pygments["Pygments<br/>2.19.2"]
+        pytest["pytest<br/>9.0.2"]
+        pytest -- ">=1.0.1" --> iniconfig
+        pytest -- ">=1.5,<2" --> pluggy
+        pytest -- ">=2.7.2" --> pygments
+        pytest -- ">=22" --> packaging
+
+This renders as:
+
+.. mermaid::
+
+    flowchart TD
+        classDef missing stroke-dasharray: 5
+        iniconfig["iniconfig<br/>2.3.0"]
+        packaging["packaging<br/>26.0"]
+        pluggy["pluggy<br/>1.6.0"]
+        pygments["Pygments<br/>2.19.2"]
+        pytest["pytest<br/>9.0.2"]
+        pytest -- ">=1.0.1" --> iniconfig
+        pytest -- ">=1.5,<2" --> pluggy
+        pytest -- ">=2.7.2" --> pygments
+        pytest -- ">=22" --> packaging
+
+graphviz
+--------
+
+Generate Graphviz output in various formats (requires ``pipdeptree[graphviz]``). The ``dot`` format produces the graph
+description language:
+
+.. code-block:: console
+
+    $ pipdeptree --packages pytest -o graphviz-dot
+    digraph {
+    	iniconfig [label="iniconfig\n2.3.0"]
+    	packaging [label="packaging\n26.0"]
+    	pluggy [label="pluggy\n1.6.0"]
+    	pygments [label="Pygments\n2.19.2"]
+    	pytest -> iniconfig [label=">=1.0.1"]
+    	pytest -> packaging [label=">=22"]
+    	pytest -> pluggy [label=">=1.5,<2"]
+    	pytest -> pygments [label=">=2.7.2"]
+    	pytest [label="pytest\n9.0.2"]
+    }
+
+Other formats render the graph directly to binary output:
+
+.. code-block:: console
+
+    $ pipdeptree -o graphviz-pdf > dependencies.pdf
+    $ pipdeptree -o graphviz-png > dependencies.png
+    $ pipdeptree -o graphviz-svg > dependencies.svg
+
+The format is specified as ``graphviz-<format>`` where ``<format>`` is any
+`Graphviz output format <https://graphviz.org/docs/outputs/>`_ (dot, pdf, png, svg, jpeg, etc.).
+
+summary
+-------
+
+``--summary`` replaces the tree with a single-block health report of the environment -- for CI gates and
+at-a-glance audits rather than per-package inspection. It is a separate axis from the renderers above: ``--summary``
+chooses *what* to show, while ``-o`` chooses *how* to style it. The styles that make sense for a flat report are
+``text`` (the default), ``rich`` and ``json``; the tree-only renderers (mermaid, graphviz, freeze, json-tree) are
+rejected. Run it over the whole environment, or scope it with ``--packages`` like the examples above:
+
+.. code-block:: console
+
+    $ pipdeptree --packages pytest --summary
+    total packages:           5
+    direct dependencies:      1
+    transitive dependencies:  4
+    max depth:                2
+    cyclic dependencies:      0
+    missing dependencies:     0
+    conflicting dependencies: 0 (0 edges)
+    licenses:                 (Apache-2.0 OR BSD-2-Clause): 1, (BSD-2-Clause): 1, (MIT License): 1, (MIT): 2
+    unknown licenses:         0
+    copyleft licenses:        no
+    min requires-python:      3.10
+    total size:               6.0 MB
+
+For terminals, ``--summary -o rich`` prints the same metrics as a styled table. For automation, ``-o json`` emits
+a machine-readable object:
+
+.. code-block:: console
+
+    $ pipdeptree --packages pytest --summary -o json
+
+.. code-block:: json
+
+    {
+      "total_packages": 5,
+      "direct_dependencies": 1,
+      "transitive_dependencies": 4,
+      "max_depth": 2,
+      "cyclic_dependencies": 0,
+      "missing_dependencies": 0,
+      "conflicting_dependencies": {
+        "packages": 0,
+        "edges": 0
+      },
+      "licenses": {
+        "breakdown": {
+          "(Apache-2.0 OR BSD-2-Clause)": 1,
+          "(BSD-2-Clause)": 1,
+          "(MIT License)": 1,
+          "(MIT)": 2
+        },
+        "unknown": 0,
+        "copyleft": false
+      },
+      "min_requires_python": "3.10",
+      "total_size": "6.0 MB",
+      "total_size_raw": 6320765
+    }
+
+``--summary`` composes with the tree sources too: ``pipdeptree from-lock pylock.toml --summary`` and
+``pipdeptree from-index 'flask' --summary`` summarize a resolved tree. The graph-structural metrics (the first
+five) come from the tree alone and work everywhere. The installed-environment metrics (missing/conflicting deps,
+licenses, requires-python, size) read real distribution metadata and files, which the ``from-index``/``from-lock``
+synthetic trees do not carry, so under those subcommands they report ``n/a`` (text) or are omitted (JSON) rather
+than a misleading zero. See :doc:`/explanation` for the reasoning.
+
+Every format above also works with the ``from-index`` subcommand (alias ``i``), e.g.
+``pipdeptree from-index --requirements requirements.txt -o json``
+to render a tree resolved from the package index without installing, and with the ``from-lock`` subcommand
+(alias ``l``), e.g. ``pipdeptree from-lock pylock.toml -o json`` to render an already-resolved PEP 751 lock offline.
+See :doc:`/how-to/usage` for details.
