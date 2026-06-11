@@ -9,11 +9,13 @@ from typing import TYPE_CHECKING
 from pipdeptree._cli import Options, get_options, parse_packages
 from pipdeptree._detect_env import detect_active_interpreter, find_active_interpreter
 from pipdeptree._discovery import InterpreterQueryError, get_installed_distributions
+from pipdeptree._drift import compute_drift
 from pipdeptree._from_index import FromIndexInputError, FromIndexUnavailableError, resolve_from_index
 from pipdeptree._from_lock import FromLockError, load_lock
 from pipdeptree._models import PackageDAG
 from pipdeptree._models.dag import IncludeExcludeOverlapError, IncludePatternNotFoundError
 from pipdeptree._render import render
+from pipdeptree._render.drift import render_drift_json, render_drift_text
 from pipdeptree._validate import validate
 from pipdeptree._warning import WarningPrinter, WarningType, get_warning_printer
 
@@ -34,6 +36,9 @@ class _FilterError(Exception):
 def main(args: Sequence[str] | None = None) -> int | None:
     """CLI - The main function called as entry point."""
     options = get_options(args)
+
+    if options.command == "drift":
+        return _handle_drift(options)
 
     # Warnings are only enabled when using text output.
     if not _is_text_output(options):
@@ -60,6 +65,46 @@ def main(args: Sequence[str] | None = None) -> int | None:
     render(options, tree)
 
     return _determine_return_code(warning_printer)
+
+
+def _handle_drift(options: Options) -> int:
+    try:
+        options.python = _resolve_python(options.python)
+        env_pkgs = get_installed_distributions(
+            interpreter=options.python,
+            supplied_paths=options.path or None,
+            local_only=options.local_only,
+            user_only=options.user_only,
+        )
+    except InterpreterQueryError as e:
+        print(f"Failed to query interpreter: {e}", file=sys.stderr)  # noqa: T201
+        return 1
+
+    try:
+        if options.drift_source == "from-lock":
+            ref_pkgs = load_lock(Path(options.lock))
+        else:
+            ref_pkgs = resolve_from_index(
+                requirements=options.requirement,
+                requirement_files=options.requirements or [],
+                pyproject_files=options.pyproject or [],
+                index_url=options.index_url,
+                extra_index_url=options.extra_index_url,
+            )
+    except (FromIndexUnavailableError, FromIndexInputError, FromLockError) as e:
+        print(str(e), file=sys.stderr)  # noqa: T201
+        return 1
+
+    env_tree = PackageDAG.from_pkgs(env_pkgs, extras=options.extras, requested_extras={})
+    ref_tree = PackageDAG.from_pkgs(ref_pkgs, extras=options.extras, requested_extras={})
+    report = compute_drift(env_tree, ref_tree)
+
+    if options.output_format == "json":
+        render_drift_json(report)
+    else:
+        render_drift_text(report)
+
+    return 1 if report.has_drift else 0
 
 
 def build_tree(options: Options, *, log_resolved: bool = False) -> PackageDAG:

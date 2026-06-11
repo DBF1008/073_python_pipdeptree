@@ -49,6 +49,7 @@ class Options(Namespace):
     metadata: list[str]
     computed: list[str]
     context: RenderContext
+    drift_source: str | None
 
 
 @dataclass
@@ -208,11 +209,76 @@ def build_parser() -> ArgumentParser:
     from_lock.add_argument("lock", metavar="PYLOCK", help="path to a PEP 751 pylock.toml lock file")
     from_lock.set_defaults(command="from-lock")
 
+    drift_parent = _build_drift_parent()
+    drift = sub.add_parser(
+        "drift",
+        aliases=["d"],
+        formatter_class=_Formatter,
+        help="compare the installed environment against a lock file or index resolution and report differences",
+        description=(
+            "Build two dependency trees -- one from the active environment, one from a reference source (lock file or "
+            "index resolution) -- and report missing, extra, and version-mismatched packages."
+        ),
+    )
+    drift.set_defaults(command="drift", drift_source=None)
+    drift_sub = drift.add_subparsers(dest="drift_source")
+
+    drift_from_lock = drift_sub.add_parser(
+        "from-lock",
+        aliases=["l"],
+        parents=[drift_parent],
+        formatter_class=_Formatter,
+        help="compare against a PEP 751 pylock.toml",
+    )
+    drift_from_lock.add_argument("lock", metavar="PYLOCK", help="path to a PEP 751 pylock.toml lock file")
+    drift_from_lock.set_defaults(drift_source="from-lock")
+
+    drift_from_index = drift_sub.add_parser(
+        "from-index",
+        aliases=["i"],
+        parents=[drift_parent],
+        formatter_class=_Formatter,
+        help="compare against an index resolution (needs the index extra)",
+    )
+    drift_from_index.add_argument(
+        "requirement",
+        nargs="*",
+        metavar="REQUIREMENT",
+        help="inline PEP 508 requirement to resolve; repeatable",
+    )
+    drift_from_index.set_defaults(drift_source="from-index")
+    drift_from_index.add_argument(
+        "--requirements",
+        action="append",
+        metavar="FILE",
+        help="a requirements.txt style file; repeatable",
+    )
+    drift_from_index.add_argument(
+        "--pyproject",
+        action="append",
+        metavar="FILE",
+        help="a pyproject.toml; repeatable",
+    )
+    drift_from_index.add_argument(
+        "--index-url",
+        metavar="URL",
+        default=None,
+        help="primary package index; falls back to PIP_INDEX_URL then UV_INDEX_URL",
+    )
+    drift_from_index.add_argument(
+        "--extra-index-url",
+        action="append",
+        metavar="URL",
+        default=None,
+        help="additional package index; repeatable",
+    )
+
     # Bare ``pipdeptree`` does not visit the subparser, so seed defaults for its attributes to keep Options total. The
     # installed-only display options (license/metadata/computed) are not exposed on the subparsers, so seed them too:
     # this keeps Options total whichever path argparse takes, so get_options can post-process it always.
     parser.set_defaults(
         command=None,
+        drift_source=None,
         requirement=[],
         requirements=None,
         pyproject=None,
@@ -241,6 +307,57 @@ def _build_render_parent() -> ArgumentParser:
         ),
     )
     _add_render_arguments(parent)
+    return parent
+
+
+DRIFT_RENDER_FORMATS = frozenset({"text", "json"})
+
+
+def _build_drift_parent() -> ArgumentParser:
+    parent = ArgumentParser(add_help=False)
+    parent.add_argument(
+        "-w",
+        "--warn",
+        dest="warn",
+        type=str,
+        choices=["silence", "suppress", "fail"],
+        default="suppress",
+        help="warning control (same as top-level)",
+    )
+    parent.add_argument(
+        "-o",
+        "--output",
+        metavar="FMT",
+        dest="output_format",
+        choices=sorted(DRIFT_RENDER_FORMATS),
+        default="text",
+        help="output format for the drift report: json or text (default)",
+    )
+    parent.add_argument(
+        "--python",
+        default=None,
+        help="Python interpreter whose environment to compare (default: auto-detect)",
+    )
+    parent.add_argument(
+        "--path",
+        help="restrict where packages should be looked for (repeatable)",
+        action="append",
+    )
+    scope = parent.add_mutually_exclusive_group()
+    scope.add_argument(
+        "-l",
+        "--local-only",
+        action="store_true",
+        default=False,
+        help="if in a virtualenv that has global access do not show globally installed packages",
+    )
+    scope.add_argument(
+        "-u",
+        "--user-only",
+        action="store_true",
+        default=False,
+        help="only show installations in the user site dir",
+    )
     return parent
 
 
@@ -394,6 +511,9 @@ def get_options(args: Sequence[str] | None) -> Options:
     parsed_args = parser.parse_args(args)
     options = cast("Options", parsed_args)
 
+    if options.command == "drift":
+        return _post_process_drift_options(parser, options)
+
     options.output_format = _handle_legacy_render_options(options)
     raw_metadata: str = cast("str", options.metadata)
     raw_computed: str = cast("str", options.computed)
@@ -426,6 +546,36 @@ def get_options(args: Sequence[str] | None) -> Options:
     if options.path and (options.local_only or options.user_only):
         parser.error("cannot use --path with --user-only or --local-only")
 
+    return options
+
+
+def _post_process_drift_options(parser: ArgumentParser, options: Options) -> Options:
+    if not options.drift_source:
+        parser.error("drift requires a source subcommand: from-lock or from-index")
+    if options.drift_source == "from-index" and not (
+        options.requirement or options.requirements or options.pyproject
+    ):
+        parser.error("drift from-index needs at least one REQUIREMENT, --requirements FILE, or --pyproject FILE")
+    if options.path and (options.local_only or options.user_only):
+        parser.error("cannot use --path with --user-only or --local-only")
+    options.freeze = False
+    options.json = False
+    options.json_tree = False
+    options.mermaid = False
+    options.graphviz_format = None
+    options.summary = False
+    options.packages = ""
+    options.exclude = ""
+    options.exclude_dependencies = False
+    options.reverse = False
+    options.all = False
+    options.depth = float("inf")
+    options.encoding = sys.stdout.encoding
+    options.extras = "explicit"
+    options.metadata = []
+    options.computed = []
+    options.license = False
+    options.context = RenderContext()
     return options
 
 
