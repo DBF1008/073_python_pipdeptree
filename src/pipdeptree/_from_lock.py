@@ -62,12 +62,11 @@ def load_lock(path: Path) -> list[Distribution]:
         msg = f"not a valid PEP 751 lock file: {path} (missing 'packages' array)"
         raise FromLockError(msg)
 
-    # Versions are looked up by canonical name so an edge can reference a package under any casing/separator spelling;
-    # a package may legitimately lack a version (VCS/local/directory pins), in which case its edges render unpinned.
-    versions = {canonicalize_name(name): str(pkg.get("version", "")) for name, pkg in _named(packages, path)}
+    named = _dedup(_named(packages, path))
+    versions = {canonicalize_name(name): str(pkg.get("version", "")) for name, pkg in named}
     return [
         SyntheticDistribution(name, str(pkg.get("version", "")), _children(pkg.get("dependencies", ()), versions))
-        for name, pkg in _named(packages, path)
+        for name, pkg in named
     ]
 
 
@@ -79,6 +78,41 @@ def _named(packages: list[Any], path: Path) -> list[tuple[str, dict[str, Any]]]:
             raise FromLockError(msg)
         named.append((str(pkg["name"]), pkg))
     return named
+
+
+def _dedup(named: list[tuple[str, dict[str, Any]]]) -> list[tuple[str, dict[str, Any]]]:
+    """Merge entries that share a canonical name, preferring the first record that carries a version."""
+    order: dict[NormalizedName, int] = {}
+    result: list[tuple[str, dict[str, Any]]] = []
+    for name, pkg in named:
+        canon = canonicalize_name(name)
+        if canon not in order:
+            order[canon] = len(result)
+            result.append((name, dict(pkg)))
+        else:
+            idx = order[canon]
+            winner_name, winner = result[idx]
+            if not winner.get("version") and pkg.get("version"):
+                winner["version"] = pkg["version"]
+                winner_name = name
+            winner["dependencies"] = _merge_deps(
+                winner.get("dependencies", []),
+                pkg.get("dependencies", []),
+            )
+            result[idx] = (winner_name, winner)
+    return result
+
+
+def _merge_deps(base: list[Any], extra: list[Any]) -> list[Any]:
+    """Union two dependency lists, deduplicating by canonical child name."""
+    seen: set[NormalizedName] = set()
+    merged: list[Any] = []
+    for dep in (*base, *extra):
+        canon = canonicalize_name(str(dep["name"]))
+        if canon not in seen:
+            seen.add(canon)
+            merged.append(dep)
+    return merged
 
 
 def _children(dependencies: Any, versions: dict[NormalizedName, str]) -> tuple[str, ...]:

@@ -208,3 +208,156 @@ def test_from_lock_rejects_installed_only_flags(flag: str) -> None:
     with pytest.raises(SystemExit) as exc:
         get_options(["from-lock", "pylock.toml", flag, "size"])
     assert exc.value.code == 2
+
+
+# -- Regression tests: duplicate names, missing versions, case mixing --
+
+
+_DUP_VERSIONS = """\
+[[packages]]
+name = "foo"
+version = "1.0"
+[[packages.dependencies]]
+name = "shared"
+[[packages]]
+name = "shared"
+version = "3.0"
+[[packages.dependencies]]
+name = "leaf"
+[[packages]]
+name = "shared"
+version = "4.0"
+[[packages.dependencies]]
+name = "extra-leaf"
+[[packages]]
+name = "leaf"
+version = "0.1"
+[[packages]]
+name = "extra-leaf"
+version = "0.2"
+"""
+
+
+def test_load_lock_dedup_same_name_keeps_first_version(tmp_path: Path) -> None:
+    dag = PackageDAG.from_pkgs(load_lock(_write(tmp_path, _DUP_VERSIONS)))
+
+    by_key = {str(pkg.key): pkg for pkg in dag}
+    assert "shared" in by_key
+    assert by_key["shared"].version == "3.0"
+    assert len(by_key) == 4
+
+
+def test_load_lock_dedup_merges_dependencies(tmp_path: Path) -> None:
+    dag = PackageDAG.from_pkgs(load_lock(_write(tmp_path, _DUP_VERSIONS)))
+
+    children = sorted(c.key for c in dag.get_children("shared"))
+    assert children == ["extra-leaf", "leaf"]
+
+
+def test_load_lock_dedup_edges_pin_correct_version(tmp_path: Path) -> None:
+    dag = PackageDAG.from_pkgs(load_lock(_write(tmp_path, _DUP_VERSIONS)))
+
+    by_child = {str(c.key): c for c in dag.get_children("shared")}
+    assert by_child["leaf"].version_spec == "==0.1"
+    assert by_child["extra-leaf"].version_spec == "==0.2"
+    (shared_edge,) = [c for c in dag.get_children("foo") if c.key == "shared"]
+    assert shared_edge.version_spec == "==3.0"
+
+
+_DUP_NO_VERSION_THEN_VERSIONED = """\
+[[packages]]
+name = "pkg"
+[[packages.dependencies]]
+name = "dep-a"
+[[packages]]
+name = "pkg"
+version = "2.0"
+[[packages.dependencies]]
+name = "dep-b"
+[[packages]]
+name = "dep-a"
+version = "1.0"
+[[packages]]
+name = "dep-b"
+version = "1.0"
+"""
+
+
+def test_load_lock_dedup_prefers_versioned_record(tmp_path: Path) -> None:
+    dag = PackageDAG.from_pkgs(load_lock(_write(tmp_path, _DUP_NO_VERSION_THEN_VERSIONED)))
+
+    by_key = {str(pkg.key): pkg for pkg in dag}
+    assert by_key["pkg"].version == "2.0"
+    children = sorted(c.key for c in dag.get_children("pkg"))
+    assert children == ["dep-a", "dep-b"]
+
+
+_CASE_MIXED = """\
+[[packages]]
+name = "Foo-Bar"
+version = "1.0"
+[[packages.dependencies]]
+name = "leaf"
+[[packages]]
+name = "foo_bar"
+version = "2.0"
+[[packages.dependencies]]
+name = "Leaf"
+[[packages]]
+name = "parent"
+version = "5.0"
+[[packages.dependencies]]
+name = "FOO_BAR"
+[[packages]]
+name = "leaf"
+version = "0.5"
+"""
+
+
+def test_load_lock_dedup_case_mixed_names(tmp_path: Path) -> None:
+    dag = PackageDAG.from_pkgs(load_lock(_write(tmp_path, _CASE_MIXED)))
+
+    by_key = {str(pkg.key): pkg for pkg in dag}
+    assert len(by_key) == 3
+    assert "foo-bar" in by_key
+    assert by_key["foo-bar"].version == "1.0"
+    (child,) = dag.get_children("foo-bar")
+    assert child.key == "leaf"
+
+
+def test_load_lock_dedup_case_mixed_edge_resolves(tmp_path: Path) -> None:
+    dag = PackageDAG.from_pkgs(load_lock(_write(tmp_path, _CASE_MIXED)))
+
+    (edge,) = [c for c in dag.get_children("parent") if c.key == "foo-bar"]
+    assert edge.version_spec == "==1.0"
+
+
+def test_load_lock_dedup_summary_package_count(
+    tmp_path: Path, mocker: MockerFixture, capsys: pytest.CaptureFixture[str]
+) -> None:
+    lock = _write(tmp_path, _DUP_VERSIONS)
+    mocker.patch("pipdeptree.__main__.sys.argv", ["", "from-lock", str(lock), "--summary"])
+
+    assert main() == 0
+
+    out, _ = capsys.readouterr()
+    for line in out.splitlines():
+        if line.strip().startswith("total packages"):
+            count = line.split()[-1]
+            assert count == "4"
+            break
+    else:
+        pytest.fail("'total packages' line not found in summary output")
+
+
+def test_main_from_lock_dedup_no_duplicate_roots(
+    tmp_path: Path, mocker: MockerFixture, capsys: pytest.CaptureFixture[str]
+) -> None:
+    lock = _write(tmp_path, _DUP_VERSIONS)
+    mocker.patch("pipdeptree.__main__.sys.argv", ["", "from-lock", str(lock)])
+
+    assert main() == 0
+
+    out, _ = capsys.readouterr()
+    lines_with_shared = [ln for ln in out.splitlines() if "shared==" in ln and not ln.startswith(" ")]
+    assert len(lines_with_shared) <= 1
