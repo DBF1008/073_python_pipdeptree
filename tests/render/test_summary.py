@@ -245,3 +245,21 @@ def test_summary_html_table(mock_pkgs: Callable[[MockGraph], Iterator[Mock]]) ->
 
     assert html.startswith("<table>")
     assert "<td>total packages</td><td>2</td>" in html
+
+
+def test_filter_exclude_deps_summary_consistency(
+    mock_pkgs: Callable[[MockGraph], Iterator[Mock]], capsys: pytest.CaptureFixture[str]
+) -> None:
+    graph: MockGraph = {
+        ("a", "1.0.0"): [("b", [])],
+        ("b", "2.0.0"): [("c", [])],
+        ("c", "3.0.0"): [("b", [])],
+        ("d", "4.0.0"): [],
+    }
+    dag = PackageDAG.from_pkgs(list(mock_pkgs(graph)))
+    filtered = dag.filter_nodes(None, {"a"}, exclude_deps=True)
+
+    data = _summary_json(filtered, capsys, mode="resolved")
+
+    assert data["total_packages"] == len(filtered)
+    assert data["total_packages"] == data["direct_dependencies"] + data["transitive_dependencies"]

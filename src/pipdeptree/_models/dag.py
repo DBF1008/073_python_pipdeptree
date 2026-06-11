@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import sys
-from collections import defaultdict, deque
+from collections import deque
 from collections.abc import Iterator, Mapping
 from enum import Enum, auto
 from fnmatch import fnmatch
@@ -247,40 +247,26 @@ class PackageDAG(Mapping[DistPackage, list[ReqPackage]]):
                 candidates.add(candidate)
                 stack.extend(dep.key for dep in self.get_children(candidate))
 
-        # Build a reverse graph to know the dependents of a candidate node
-        reverse_graph = self.reverse()
+        all_keys = {node.key for node in self._obj}
+        safe_nodes = all_keys - candidates
 
-        # Precompute number of dependents for each candidate
-        dependents_count: defaultdict[str, int] = defaultdict(int)
-        for node in candidates:
-            dependents_count[node] += len(reverse_graph.get_children(node))
-
-        new_exclude = set()
-
-        # Determine what nodes should actually be excluded
-        # Use the resolved exclude set as a starting point as these nodes are explicitly excluded
-        queue = deque(resolved_exclude)
+        # BFS from safe nodes: any candidate reachable from a safe node must be retained.
+        # Do not traverse through resolved_exclude nodes — they are explicitly excluded,
+        # so they must not act as a bridge keeping their subtrees alive.
+        retained: set[str] = set()
+        visited: set[str] = set(safe_nodes)
+        queue = deque(safe_nodes)
         while queue:
-            node = queue.popleft()
-            new_exclude.add(node)
-            for child in self.get_children(node):
-                child_key = child.key
-                dependents_count[child_key] -= 1
+            current = queue.popleft()
+            for child in self.get_children(current):
+                if child.key not in visited:
+                    visited.add(child.key)
+                    if child.key in candidates:
+                        retained.add(child.key)
+                    if child.key not in resolved_exclude:
+                        queue.append(child.key)
 
-                # If all dependents of child are excluded, it itself is now eligible for exclusion
-                # If this branch is never reached, this means there is a dependant that is outside the exclusion set
-                # that needs child
-                #
-                # We also don't want to add child nodes that are in the resolved exclude set, as they are explicitly
-                # excluded and have either already been processed or are in the queue awaiting processing
-                if (
-                    dependents_count[child_key] == 0
-                    and child_key not in new_exclude
-                    and child_key not in resolved_exclude
-                ):
-                    queue.append(child_key)
-
-        return new_exclude
+        return resolved_exclude | (candidates - retained)
 
     def reverse(self) -> ReversedPackageDAG:
         """

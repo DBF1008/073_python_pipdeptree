@@ -162,6 +162,47 @@ def test_package_dag_filter_packages_uses_pep503normalize(
             {"a", "b"},
             id="with-package-having-large-depth",
         ),
+        pytest.param(
+            {
+                ("a", "1.0.0"): [("b", [])],
+                ("b", "2.0.0"): [("c", [])],
+                ("c", "3.0.0"): [("b", [])],
+            },
+            {"a"},
+            set(),
+            id="cyclic-deps-orphaned",
+        ),
+        pytest.param(
+            {
+                ("a", "1.0.0"): [("b", [])],
+                ("b", "2.0.0"): [("c", [])],
+                ("c", "3.0.0"): [("b", [])],
+                ("d", "4.0.0"): [("b", [])],
+            },
+            {"a"},
+            {"b", "c", "d"},
+            id="cyclic-deps-shared-retained",
+        ),
+        pytest.param(
+            {
+                ("a-1", "1.0.0"): [("shared", [])],
+                ("a-2", "2.0.0"): [("shared", [])],
+                ("b-1", "3.0.0"): [("shared", [])],
+                ("shared", "4.0.0"): [],
+            },
+            {"a-*"},
+            {"b-1", "shared"},
+            id="wildcard-shared-dependency",
+        ),
+        pytest.param(
+            {
+                ("a-1", "1.0.0"): [("x", [])],
+                ("x", "2.0.0"): [("a-1", [])],
+            },
+            {"a-*"},
+            set(),
+            id="wildcard-cycle",
+        ),
     ],
 )
 def test_package_dag_filter_packages_given_exclude_dependencies(
@@ -535,3 +576,37 @@ def test_dag_extras_resolves_chains_deeper_than_recursion_limit(make_mock_dist: 
     )
     dag = PackageDAG.from_pkgs(pkgs, extras="active")
     assert {dep.key for dep in dag.get_children("l0")} == {"l1"}
+
+
+def test_reversed_dag_filter_exclude_deps_with_cycle(
+    mock_pkgs: Callable[[MockGraph], Iterator[Mock]],
+) -> None:
+    graph: MockGraph = {
+        ("a", "1.0.0"): [("b", [])],
+        ("b", "2.0.0"): [("c", [])],
+        ("c", "3.0.0"): [("a", []), ("b", [])],
+    }
+    dag = PackageDAG.from_pkgs(list(mock_pkgs(graph)))
+    rev = dag.reverse()
+    filtered = rev.filter_nodes(None, {"b"}, exclude_deps=True)
+    assert len(filtered) == 0
+
+
+def test_reversed_dag_filter_exclude_deps_shared(
+    mock_pkgs: Callable[[MockGraph], Iterator[Mock]],
+) -> None:
+    graph: MockGraph = {
+        ("a", "1.0.0"): [("x", [])],
+        ("b", "1.0.0"): [("x", [])],
+        ("c", "1.0.0"): [("y", [])],
+        ("x", "1.0.0"): [("z", [])],
+        ("y", "1.0.0"): [("z", [])],
+    }
+    dag = PackageDAG.from_pkgs(list(mock_pkgs(graph)))
+    rev = dag.reverse()
+    filtered = rev.filter_nodes(None, {"x"}, exclude_deps=True)
+    remaining = {p.key for p in filtered}
+    assert remaining == {"y", "z", "c"}
+    z_children = {c.key for c in filtered.get_children("z")}
+    assert "x" not in z_children
+    assert "y" in z_children
